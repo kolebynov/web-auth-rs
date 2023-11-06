@@ -1,0 +1,10 @@
+[package]
+name = "actix-full-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+actix-web = { version = "4" }
+tokio = { version = "1.33", features = ["full"] }
+web-auth-rs = { path = "../../", features = ["actix", "jwt"] }
