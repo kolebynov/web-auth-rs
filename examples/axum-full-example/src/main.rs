@@ -1,18 +1,17 @@
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
-use axum::{body::Body, response::Html, routing::get, BoxError, Extension, Router};
+use axum::{response::Html, routing::get, BoxError, Extension, Router};
 use web_auth_rs::{
     core::{
-        authentication::AuthenticationServiceBuilder,
-        authorization::{AuthorizationPolicy, IsInRoleRequirement},
+        authentication::AuthenticationServiceBuilder, authorization::AuthorizationPolicyBuilder,
         principal::AuthenticatedPrincipal,
     },
-    framework::tower::{AuthenticationLayer, AuthorizeLayer},
+    framework::tower_auth::{AuthenticationLayer, AuthorizeLayer},
     jsonwebtoken::{DecodingKey, Validation},
     jwt::JwtBearerHandler,
 };
 
-async fn axum_test_get(Extension(user): Extension<AuthenticatedPrincipal>) -> Html<String> {
+async fn test_get(Extension(user): Extension<AuthenticatedPrincipal>) -> Html<String> {
     Html(format!("<pre>hello world:\n{:#?}</pre>", user))
 }
 
@@ -23,33 +22,27 @@ async fn main() -> Result<(), BoxError> {
     validation.set_issuer(&["issuer"]);
     validation.validate_exp = true;
 
-    let jwt_handler_1 = JwtBearerHandler {
-        validation_opt: validation.clone(),
-        decoding_key: DecodingKey::from_secret("1234567890123456".as_bytes()),
-    };
-
-    let jwt_handler_2 = JwtBearerHandler {
+    let jwt_handler = JwtBearerHandler {
         validation_opt: validation,
-        decoding_key: DecodingKey::from_secret("1234567890123459".as_bytes()),
+        decoding_key: DecodingKey::from_secret("1234567890123456".as_bytes()),
     };
 
     let auth_service = Arc::new(
         AuthenticationServiceBuilder::new()
-            .add_authentication_handler("Bearer 1".to_owned(), jwt_handler_1)
-            .add_authentication_handler("Bearer 2".to_owned(), jwt_handler_2)
-            .set_default_scheme("Bearer 2".to_owned())
+            .add_authentication_handler("Bearer".to_owned(), jwt_handler)
+            .set_default_scheme("Bearer".to_owned())
             .build()
             .unwrap(),
     );
 
+    let authorize_layer = AuthorizeLayer::new(
+        AuthorizationPolicyBuilder::new()
+            .require_role("test".to_owned())
+            .build(auth_service.clone()),
+    );
+
     let router = Router::new()
-        .route(
-            "/*rest",
-            get(axum_test_get).layer(AuthorizeLayer::<_, _, Body>::new(
-                AuthorizationPolicy::new(auth_service.clone())
-                    .add_requirement(IsInRoleRequirement("test".to_owned())),
-            )),
-        )
+        .route("/*rest", get(test_get).layer(authorize_layer))
         .layer(AuthenticationLayer {
             service: auth_service,
         });

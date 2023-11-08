@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{
     authentication::{AuthenticationService, CompoundAuthenticationHandler},
-    http::{Request, Response},
+    http::{AuthResponse, Request},
     principal::AuthenticatedPrincipal,
 };
 
@@ -41,21 +41,13 @@ impl AuthorizationRequirement for IsInRoleRequirement {
     }
 }
 
-pub struct AuthorizationPolicy<Handler, Requirement = ()> {
-    auth_service: Arc<AuthenticationService<Handler>>,
-    requirement: Requirement,
-}
-
-impl<Handler> AuthorizationPolicy<Handler, ()>
+pub struct AuthorizationPolicy<Handler, Requirement = ()>
 where
     Handler: CompoundAuthenticationHandler,
+    Requirement: AuthorizationRequirement,
 {
-    pub fn new(auth_service: Arc<AuthenticationService<Handler>>) -> Self {
-        Self {
-            auth_service,
-            requirement: (),
-        }
-    }
+    auth_service: Arc<AuthenticationService<Handler>>,
+    requirement: Requirement,
 }
 
 impl<Handler, Requirement> AuthorizationPolicy<Handler, Requirement>
@@ -63,29 +55,13 @@ where
     Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
 {
-    pub fn add_requirement<R: AuthorizationRequirement>(
-        self,
-        requirement: R,
-    ) -> AuthorizationPolicy<Handler, (Requirement, R)> {
-        AuthorizationPolicy {
-            auth_service: self.auth_service,
-            requirement: (self.requirement, requirement),
-        }
-    }
-
-    pub async fn authorize<Resp: Response>(&self, request: &mut impl Request) -> Result<(), Resp> {
+    pub async fn authorize(&self, request: &mut impl Request) -> Result<(), AuthResponse> {
         let Some(principal) = request.get_extension_mut() else {
-            let mut challenge_response = Resp::default();
-            self.auth_service
-                .challenge(None, &mut challenge_response)
-                .await;
-            return Err(challenge_response);
+            return Err(self.auth_service.challenge(None).await);
         };
 
         if !self.requirement.authorize(principal).await {
-            let mut forbid_response = Resp::default();
-            self.auth_service.forbid(None, &mut forbid_response).await;
-            return Err(forbid_response);
+            return Err(self.auth_service.forbid(None).await);
         }
 
         Ok(())
@@ -94,6 +70,7 @@ where
 
 impl<Handler, Requirement> Clone for AuthorizationPolicy<Handler, Requirement>
 where
+    Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
 {
     fn clone(&self) -> Self {
@@ -101,5 +78,55 @@ where
             auth_service: self.auth_service.clone(),
             requirement: self.requirement.clone(),
         }
+    }
+}
+
+pub struct AuthorizationPolicyBuilder<Requirement>
+where
+    Requirement: AuthorizationRequirement,
+{
+    requirement: Requirement,
+}
+
+impl AuthorizationPolicyBuilder<()> {
+    pub fn new() -> Self {
+        Self { requirement: () }
+    }
+}
+
+impl<Requirement> AuthorizationPolicyBuilder<Requirement>
+where
+    Requirement: AuthorizationRequirement,
+{
+    pub fn add_requirement<R: AuthorizationRequirement>(
+        self,
+        requirement: R,
+    ) -> AuthorizationPolicyBuilder<(Requirement, R)> {
+        AuthorizationPolicyBuilder {
+            requirement: (self.requirement, requirement),
+        }
+    }
+
+    pub fn require_role(
+        self,
+        role: String,
+    ) -> AuthorizationPolicyBuilder<(Requirement, IsInRoleRequirement)> {
+        self.add_requirement(IsInRoleRequirement(role))
+    }
+
+    pub fn build<Handler: CompoundAuthenticationHandler>(
+        self,
+        auth_service: Arc<AuthenticationService<Handler>>,
+    ) -> AuthorizationPolicy<Handler, Requirement> {
+        AuthorizationPolicy {
+            auth_service,
+            requirement: self.requirement,
+        }
+    }
+}
+
+impl Default for AuthorizationPolicyBuilder<()> {
+    fn default() -> Self {
+        Self::new()
     }
 }

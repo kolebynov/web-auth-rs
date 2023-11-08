@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use super::{
-    http::{Request, Response},
+    http::{AuthResponse, Request},
     principal::AuthenticatedPrincipal,
 };
 
@@ -16,18 +16,18 @@ pub type AuthenticationResult = Result<AuthenticatedPrincipal, AuthenticationErr
 pub trait AuthenticationHandler: Send + Sync + 'static {
     async fn authenticate(&self, request: &mut impl Request) -> AuthenticationResult;
 
-    async fn challenge(&self, response: &mut impl Response);
+    async fn challenge(&self) -> AuthResponse;
 
-    async fn forbid(&self, response: &mut impl Response);
+    async fn forbid(&self) -> AuthResponse;
 }
 
 #[async_trait]
 pub trait CompoundAuthenticationHandler: Send + Sync + 'static {
     async fn authenticate(&self, request: &mut impl Request) -> AuthenticationResult;
 
-    async fn challenge(&self, scheme: &str, response: &mut impl Response) -> bool;
+    async fn challenge(&self, scheme: &str) -> Option<AuthResponse>;
 
-    async fn forbid(&self, scheme: &str, response: &mut impl Response) -> bool;
+    async fn forbid(&self, scheme: &str) -> Option<AuthResponse>;
 }
 
 pub struct AuthenticationHandlerWithScheme<Handler: AuthenticationHandler> {
@@ -44,21 +44,19 @@ where
         self.handler.authenticate(request).await
     }
 
-    async fn challenge(&self, scheme: &str, response: &mut impl Response) -> bool {
+    async fn challenge(&self, scheme: &str) -> Option<AuthResponse> {
         if scheme == self.scheme {
-            self.handler.challenge(response).await;
-            true
+            Some(self.handler.challenge().await)
         } else {
-            false
+            None
         }
     }
 
-    async fn forbid(&self, scheme: &str, response: &mut impl Response) -> bool {
+    async fn forbid(&self, scheme: &str) -> Option<AuthResponse> {
         if scheme == self.scheme {
-            self.handler.forbid(response).await;
-            true
+            Some(self.handler.forbid().await)
         } else {
-            false
+            None
         }
     }
 }
@@ -78,31 +76,37 @@ where
         }
     }
 
-    async fn challenge(&self, scheme: &str, response: &mut impl Response) -> bool {
-        let challenged = self.0.challenge(scheme, response).await;
-        if challenged {
-            challenged
+    async fn challenge(&self, scheme: &str) -> Option<AuthResponse> {
+        let response = self.0.challenge(scheme).await;
+        if response.is_some() {
+            response
         } else {
-            self.1.challenge(scheme, response).await
+            self.1.challenge(scheme).await
         }
     }
 
-    async fn forbid(&self, scheme: &str, response: &mut impl Response) -> bool {
-        let forbid = self.0.forbid(scheme, response).await;
-        if forbid {
-            forbid
+    async fn forbid(&self, scheme: &str) -> Option<AuthResponse> {
+        let response = self.0.forbid(scheme).await;
+        if response.is_some() {
+            response
         } else {
-            self.1.forbid(scheme, response).await
+            self.1.forbid(scheme).await
         }
     }
 }
 
-pub struct AuthenticationService<Handler> {
+pub struct AuthenticationService<Handler>
+where
+    Handler: CompoundAuthenticationHandler,
+{
     handler: Handler,
     default_scheme: String,
 }
 
-impl<Handler: CompoundAuthenticationHandler> AuthenticationService<Handler> {
+impl<Handler> AuthenticationService<Handler>
+where
+    Handler: CompoundAuthenticationHandler,
+{
     pub async fn authenticate(&self, request: &mut impl Request) {
         let result = self.handler.authenticate(request).await;
         match result {
@@ -115,18 +119,20 @@ impl<Handler: CompoundAuthenticationHandler> AuthenticationService<Handler> {
         };
     }
 
-    pub async fn challenge(&self, scheme: Option<&str>, response: &mut impl Response) {
+    pub async fn challenge(&self, scheme: Option<&str>) -> AuthResponse {
         let scheme = scheme.unwrap_or(&self.default_scheme);
-        if !self.handler.challenge(scheme, response).await {
-            panic!("Scheme {scheme} is not configured");
-        }
+        self.handler
+            .challenge(scheme)
+            .await
+            .unwrap_or_else(|| panic!("Scheme {scheme} is not configured"))
     }
 
-    pub async fn forbid(&self, scheme: Option<&str>, response: &mut impl Response) {
+    pub async fn forbid(&self, scheme: Option<&str>) -> AuthResponse {
         let scheme = scheme.unwrap_or(&self.default_scheme);
-        if !self.handler.forbid(scheme, response).await {
-            panic!("Scheme {scheme} is not configured");
-        }
+        self.handler
+            .forbid(scheme)
+            .await
+            .unwrap_or_else(|| panic!("Scheme {scheme} is not configured"))
     }
 }
 

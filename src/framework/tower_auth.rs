@@ -1,11 +1,12 @@
-use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc};
 
-use http::{Request, Response};
+use http::Request;
 use tower::{Layer, Service};
 
 use crate::core::{
     authentication::{AuthenticationService, CompoundAuthenticationHandler},
     authorization::{AuthorizationPolicy, AuthorizationRequirement},
+    http::AuthResponse,
 };
 
 impl<Body: Send + 'static> crate::core::http::Request for Request<Body> {
@@ -30,11 +31,17 @@ impl<Body: Send + 'static> crate::core::http::Request for Request<Body> {
     }
 }
 
-pub struct AuthenticationLayer<Handler> {
+pub struct AuthenticationLayer<Handler>
+where
+    Handler: CompoundAuthenticationHandler,
+{
     pub service: Arc<AuthenticationService<Handler>>,
 }
 
-impl<Handler> Clone for AuthenticationLayer<Handler> {
+impl<Handler> Clone for AuthenticationLayer<Handler>
+where
+    Handler: CompoundAuthenticationHandler,
+{
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
@@ -56,12 +63,19 @@ where
     }
 }
 
-pub struct Authentication<S, Handler> {
+pub struct Authentication<S, Handler>
+where
+    Handler: CompoundAuthenticationHandler,
+{
     inner: S,
     service: Arc<AuthenticationService<Handler>>,
 }
 
-impl<S: Clone, Handler> Clone for Authentication<S, Handler> {
+impl<S, Handler> Clone for Authentication<S, Handler>
+where
+    S: Clone,
+    Handler: CompoundAuthenticationHandler,
+{
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -99,75 +113,77 @@ where
     }
 }
 
-pub struct AuthorizeLayer<Handler, Requirement, ResBody>(
-    AuthorizationPolicy<Handler, Requirement>,
-    PhantomData<ResBody>,
-);
-
-impl<Handler, Requirement, ResBody> AuthorizeLayer<Handler, Requirement, ResBody>
-where
+pub struct AuthorizeLayer<
+    Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
-{
-    pub fn new(policy: AuthorizationPolicy<Handler, Requirement>) -> Self {
-        Self(policy, PhantomData)
-    }
-}
+>(AuthorizationPolicy<Handler, Requirement>);
 
-impl<Handler, Requirement, ResBody> Clone for AuthorizeLayer<Handler, Requirement, ResBody>
-where
-    Requirement: AuthorizationRequirement,
-{
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), PhantomData)
-    }
-}
-
-impl<S, Handler, Requirement, ResBody> Layer<S> for AuthorizeLayer<Handler, Requirement, ResBody>
+impl<Handler, Requirement> AuthorizeLayer<Handler, Requirement>
 where
     Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
 {
-    type Service = Authorize<S, Handler, Requirement, ResBody>;
+    pub fn new(policy: AuthorizationPolicy<Handler, Requirement>) -> Self {
+        Self(policy)
+    }
+}
+
+impl<Handler, Requirement> Clone for AuthorizeLayer<Handler, Requirement>
+where
+    Handler: CompoundAuthenticationHandler,
+    Requirement: AuthorizationRequirement,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<S, Handler, Requirement> Layer<S> for AuthorizeLayer<Handler, Requirement>
+where
+    Handler: CompoundAuthenticationHandler,
+    Requirement: AuthorizationRequirement,
+{
+    type Service = Authorize<S, Handler, Requirement>;
 
     fn layer(&self, inner: S) -> Self::Service {
         Authorize {
             inner,
             policy: self.0.clone(),
-            _phantom: PhantomData,
         }
     }
 }
 
-pub struct Authorize<S, Handler, Requirement, ResBody> {
+pub struct Authorize<S, Handler, Requirement>
+where
+    Handler: CompoundAuthenticationHandler,
+    Requirement: AuthorizationRequirement,
+{
     inner: S,
     policy: AuthorizationPolicy<Handler, Requirement>,
-    _phantom: PhantomData<ResBody>,
 }
 
-impl<S: Clone, Handler, Requirement, ResBody> Clone for Authorize<S, Handler, Requirement, ResBody>
+impl<S: Clone, Handler, Requirement> Clone for Authorize<S, Handler, Requirement>
 where
+    Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
 {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
             policy: self.policy.clone(),
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<S, Handler, Requirement, Body, ResBody> Service<Request<Body>>
-    for Authorize<S, Handler, Requirement, ResBody>
+impl<S, Handler, Requirement, Body> Service<Request<Body>> for Authorize<S, Handler, Requirement>
 where
     S: Service<Request<Body>> + Clone + Send + 'static,
     S::Future: Send,
     Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
     Body: Send + 'static,
-    ResBody: Default + Send + Sync + 'static,
 {
-    type Response = Result<S::Response, Response<ResBody>>;
+    type Response = Result<S::Response, AuthResponse>;
 
     type Error = S::Error;
 
@@ -188,15 +204,5 @@ where
                 Err(response) => Ok(Err(response)),
             }
         })
-    }
-}
-
-impl<B: Default + Send + Sync + 'static> crate::core::http::Response for http::Response<B> {
-    fn set_status_code(&mut self, status_code: http::StatusCode) {
-        *self.status_mut() = status_code;
-    }
-
-    fn set_header(&mut self, header: impl http::header::IntoHeaderName, value: http::HeaderValue) {
-        self.headers_mut().insert(header, value);
     }
 }

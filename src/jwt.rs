@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use http::{
     header::{AUTHORIZATION, WWW_AUTHENTICATE},
-    HeaderValue, StatusCode,
+    HeaderMap, HeaderValue, StatusCode,
 };
 use jsonwebtoken::{DecodingKey, Validation};
 
 use crate::core::{
     authentication::{AuthenticationError, AuthenticationHandler, AuthenticationResult},
-    http::{Request, Response},
+    http::{AuthResponse, Request},
     principal::{AuthenticatedPrincipal, Claim},
 };
 
@@ -52,13 +52,18 @@ impl AuthenticationHandler for JwtBearerHandler {
         })
     }
 
-    async fn challenge(&self, response: &mut impl Response) {
-        response.set_header(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
-        response.set_status_code(StatusCode::UNAUTHORIZED);
+    async fn challenge(&self) -> AuthResponse {
+        AuthResponse {
+            status_code: StatusCode::UNAUTHORIZED,
+            headers: HeaderMap::from_iter([(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"))]),
+        }
     }
 
-    async fn forbid(&self, response: &mut impl Response) {
-        response.set_status_code(StatusCode::FORBIDDEN);
+    async fn forbid(&self) -> AuthResponse {
+        AuthResponse {
+            status_code: StatusCode::FORBIDDEN,
+            headers: HeaderMap::default(),
+        }
     }
 }
 
