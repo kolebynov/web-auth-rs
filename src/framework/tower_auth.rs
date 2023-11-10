@@ -114,10 +114,7 @@ where
 
     type Future = Pin<Box<dyn Future<Output = Result<S::Response, S::Error>> + Send>>;
 
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
@@ -130,10 +127,9 @@ where
     }
 }
 
-pub struct AuthorizeLayer<
-    Handler: CompoundAuthenticationHandler,
-    Requirement: AuthorizationRequirement,
->(AuthorizationPolicy<Handler, Requirement>);
+pub struct AuthorizeLayer<Handler: CompoundAuthenticationHandler, Requirement: AuthorizationRequirement>(
+    AuthorizationPolicy<Handler, Requirement>,
+);
 
 impl<Handler, Requirement> AuthorizeLayer<Handler, Requirement>
 where
@@ -192,16 +188,17 @@ where
     }
 }
 
-impl<S, Handler, Requirement, Body, ChallengeFut, ForbidFut> Service<Request<Body>>
+impl<S, Handler, Requirement, Body, ChallengeFut, ForbidFut, AuthorizeFut> Service<Request<Body>>
     for Authorize<S, Handler, Requirement>
 where
     S: Service<Request<Body>> + Clone + Send + 'static,
     S::Future: Send,
     Handler: CompoundAuthenticationHandler<ChallengeFut = ChallengeFut, ForbidFut = ForbidFut>,
-    Requirement: AuthorizationRequirement,
+    Requirement: AuthorizationRequirement<AuthorizeFut = AuthorizeFut>,
     Body: Send + 'static,
     ChallengeFut: Future<Output = Option<AuthResponse>> + Send,
     ForbidFut: Future<Output = Option<AuthResponse>> + Send,
+    AuthorizeFut: Future<Output = bool> + Send,
 {
     type Response = Result<S::Response, AuthResponse>;
 
@@ -209,10 +206,7 @@ where
 
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, S::Error>> + Send>>;
 
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 

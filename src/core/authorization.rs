@@ -1,45 +1,54 @@
-use std::sync::Arc;
+use std::{
+    future::{ready, Ready},
+    sync::Arc,
+};
 
-use async_trait::async_trait;
+use futures::{
+    future::{join, Join},
+    Future,
+};
 
 use super::{
-    authentication::{
-        AuthenticationService, CompoundAuthenticationHandler, SuccessAuthenticationResult,
-    },
+    authentication::{AuthenticationService, CompoundAuthenticationHandler, SuccessAuthenticationResult},
+    futures::{merge_bool_and, MergeBoolAnd},
     http::{AuthResponse, Request, RequestExtensions},
     principal::UserPrincipal,
 };
 
-#[async_trait]
 pub trait AuthorizationRequirement: Clone + Send + Sync + 'static {
-    async fn authorize(&self, principal: &mut UserPrincipal) -> bool;
+    type AuthorizeFut: Future<Output = bool>;
+
+    fn authorize(&self, principal: &mut UserPrincipal) -> Self::AuthorizeFut;
 }
 
-#[async_trait]
 impl AuthorizationRequirement for () {
-    async fn authorize(&self, _: &mut UserPrincipal) -> bool {
-        true
+    type AuthorizeFut = Ready<bool>;
+
+    fn authorize(&self, _: &mut UserPrincipal) -> Self::AuthorizeFut {
+        ready(true)
     }
 }
 
-#[async_trait]
 impl<R1, R2> AuthorizationRequirement for (R1, R2)
 where
     R1: AuthorizationRequirement,
     R2: AuthorizationRequirement,
 {
-    async fn authorize(&self, principal: &mut UserPrincipal) -> bool {
-        self.0.authorize(principal).await && self.1.authorize(principal).await
+    type AuthorizeFut = MergeBoolAnd<Join<R1::AuthorizeFut, R2::AuthorizeFut>>;
+
+    fn authorize(&self, principal: &mut UserPrincipal) -> Self::AuthorizeFut {
+        merge_bool_and(join(self.0.authorize(principal), self.1.authorize(principal)))
     }
 }
 
 #[derive(Clone)]
 pub struct IsInRoleRequirement(pub String);
 
-#[async_trait]
 impl AuthorizationRequirement for IsInRoleRequirement {
-    async fn authorize(&self, principal: &mut UserPrincipal) -> bool {
-        principal.is_in_role(&self.0)
+    type AuthorizeFut = Ready<bool>;
+
+    fn authorize(&self, principal: &mut UserPrincipal) -> Self::AuthorizeFut {
+        ready(principal.is_in_role(&self.0))
     }
 }
 
@@ -110,10 +119,7 @@ where
         }
     }
 
-    pub fn require_role(
-        self,
-        role: String,
-    ) -> AuthorizationPolicyBuilder<(Requirement, IsInRoleRequirement)> {
+    pub fn require_role(self, role: String) -> AuthorizationPolicyBuilder<(Requirement, IsInRoleRequirement)> {
         self.add_requirement(IsInRoleRequirement(role))
     }
 

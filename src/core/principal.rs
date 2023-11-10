@@ -11,8 +11,6 @@ pub struct UserPrincipal {
 
 impl UserPrincipal {
     pub fn is_in_role(&self, role: &str) -> bool {
-        self.claims
-            .iter()
-            .any(|x| x.kind == "role" && x.value == role)
+        self.claims.iter().any(|x| x.kind == "role" && x.value == role)
     }
 }

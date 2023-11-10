@@ -12,10 +12,7 @@ use web_auth_rs::{
 };
 
 async fn test_get(Extension(auth_result): Extension<SuccessAuthenticationResult>) -> Html<String> {
-    Html(format!(
-        "<pre>hello world:\n{:#?}</pre>",
-        auth_result.principal
-    ))
+    Html(format!("<pre>hello world:\n{:#?}</pre>", auth_result.principal))
 }
 
 #[tokio::main]
@@ -46,9 +43,7 @@ async fn main() -> Result<(), BoxError> {
 
     let router = Router::new()
         .route("/*rest", get(test_get).layer(authorize_layer))
-        .layer(AuthenticationLayer {
-            service: auth_service,
-        });
+        .layer(AuthenticationLayer { service: auth_service });
 
     axum::Server::try_bind(&SocketAddr::from_str("0.0.0.0:8000")?)?
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())

@@ -81,6 +81,28 @@ where
     }
 }
 
+#[pin_project]
+pub struct MergeBoolAnd<Fut> {
+    #[pin]
+    fut: Fut,
+}
+
+impl<Fut> Future for MergeBoolAnd<Fut>
+where
+    Fut: Future<Output = (bool, bool)>,
+{
+    type Output = bool;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+
+        match this.fut.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready((b1, b2)) => Poll::Ready(b1 && b2),
+        }
+    }
+}
+
 pub fn select_seq_ok<Fut1, Fut2>(fut1: Fut1, fut2: Fut2) -> SelectSeqOk<Fut1, Fut2>
 where
     Fut1: TryFuture<Ok = Fut2::Ok, Error = Fut2::Error>,
@@ -103,4 +125,11 @@ where
         fut2,
         state: SelectSeqState::PollFirst,
     }
+}
+
+pub fn merge_bool_and<Fut>(fut: Fut) -> MergeBoolAnd<Fut>
+where
+    Fut: Future<Output = (bool, bool)>,
+{
+    MergeBoolAnd { fut }
 }

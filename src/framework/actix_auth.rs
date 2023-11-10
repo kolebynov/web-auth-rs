@@ -70,9 +70,7 @@ impl ResponseError for AuthResponse {
     }
 }
 
-pub struct Authentication<Handler: CompoundAuthenticationHandler>(
-    pub Arc<AuthenticationService<Handler>>,
-);
+pub struct Authentication<Handler: CompoundAuthenticationHandler>(pub Arc<AuthenticationService<Handler>>);
 
 impl<S, B, Handler> Transform<S, ServiceRequest> for Authentication<Handler>
 where
@@ -89,7 +87,7 @@ where
 
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(AuthenticationMiddleware {
-            service: Arc::new(service),
+            inner: Arc::new(service),
             auth_service: self.0.clone(),
         }))
     }
@@ -99,7 +97,7 @@ pub struct AuthenticationMiddleware<S, Handler>
 where
     Handler: CompoundAuthenticationHandler,
 {
-    service: Arc<S>,
+    inner: Arc<S>,
     auth_service: Arc<AuthenticationService<Handler>>,
 }
 
@@ -114,11 +112,11 @@ where
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    forward_ready!(service);
+    forward_ready!(inner);
 
     fn call(&self, mut req: ServiceRequest) -> Self::Future {
         let auth_service = self.auth_service.clone();
-        let inner = self.service.clone();
+        let inner = self.inner.clone();
 
         Box::pin(async move {
             auth_service.authenticate(&mut req).await;
@@ -157,7 +155,7 @@ where
 
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(AuthorizeMiddleware {
-            service: Arc::new(service),
+            inner: Arc::new(service),
             policy: self.0.clone(),
         }))
     }
@@ -168,12 +166,11 @@ where
     Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
 {
-    service: Arc<S>,
+    inner: Arc<S>,
     policy: AuthorizationPolicy<Handler, Requirement>,
 }
 
-impl<S, B, Handler, Requirement> Service<ServiceRequest>
-    for AuthorizeMiddleware<S, Handler, Requirement>
+impl<S, B, Handler, Requirement> Service<ServiceRequest> for AuthorizeMiddleware<S, Handler, Requirement>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     S::Future: 'static,
@@ -185,11 +182,11 @@ where
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    forward_ready!(service);
+    forward_ready!(inner);
 
     fn call(&self, mut req: ServiceRequest) -> Self::Future {
         let policy = self.policy.clone();
-        let inner = self.service.clone();
+        let inner = self.inner.clone();
         Box::pin(async move {
             match policy.authorize(&mut req).await {
                 Ok(()) => inner.call(req).await,

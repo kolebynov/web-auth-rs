@@ -187,10 +187,7 @@ where
         handler: H,
     ) -> AuthenticationServiceBuilder<(Handler, AuthenticationHandlerWithScheme<H>)> {
         AuthenticationServiceBuilder {
-            handler: (
-                self.handler,
-                AuthenticationHandlerWithScheme { scheme, handler },
-            ),
+            handler: (self.handler, AuthenticationHandlerWithScheme { scheme, handler }),
             default_scheme: self.default_scheme,
         }
     }
