@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{
     authentication::{AuthenticationService, CompoundAuthenticationHandler},
-    http::{AuthResponse, Request},
+    http::{AuthResponse, Request, RequestExtensions},
     principal::AuthenticatedPrincipal,
 };
 
@@ -56,7 +56,8 @@ where
     Requirement: AuthorizationRequirement,
 {
     pub async fn authorize(&self, request: &mut impl Request) -> Result<(), AuthResponse> {
-        let Some(principal) = request.get_extension_mut() else {
+        let mut extensions = request.get_extensions_mut();
+        let Some(principal) = extensions.get_mut() else {
             return Err(self.auth_service.challenge(None).await);
         };
 

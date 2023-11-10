@@ -1,1 +1,1 @@
-Authentication middleware for Axum and Actix (WIP).
+Authentication middleware for Axum and Actix.

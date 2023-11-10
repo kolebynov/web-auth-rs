@@ -11,6 +11,10 @@ actix-web = { version = "4", default-features = false, optional = true }
 axum-core = { version = "0.3", optional = true }
 anyhow = { version = "1" }
 async-trait = { version = "0.1" }
+futures = { version = "0.3", default-features = false, features = [
+    "std",
+    "async-await",
+] }
 http = { version = "0.2" }
 jsonwebtoken = { version = "9.1", default-features = false, optional = true }
 pin-project = { version = "1" }

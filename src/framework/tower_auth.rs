@@ -1,33 +1,49 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use http::Request;
+use http::{HeaderName, Request};
 use tower::{Layer, Service};
 
 use crate::core::{
-    authentication::{AuthenticationService, CompoundAuthenticationHandler},
+    authentication::{AuthenticationResult, AuthenticationService, CompoundAuthenticationHandler},
     authorization::{AuthorizationPolicy, AuthorizationRequirement},
-    http::AuthResponse,
+    http::{AuthResponse, RequestExtensions},
 };
 
+impl RequestExtensions for http::Extensions {
+    fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.get()
+    }
+
+    fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
+        self.get_mut()
+    }
+
+    fn insert<T: Send + Sync + 'static>(&mut self, ext: T) -> Option<T> {
+        self.insert(ext)
+    }
+}
+
 impl<Body: Send + 'static> crate::core::http::Request for Request<Body> {
+    type RequestExtensions = http::Extensions;
+
+    type RequestExtensionsDeref<'a> = &'a http::Extensions;
+
+    type RequestExtensionsDerefMut<'a> = &'a mut http::Extensions;
+
     fn get_uri(&self) -> &http::Uri {
         self.uri()
     }
 
-    fn get_header(&self, header: impl http::header::AsHeaderName) -> Option<&http::HeaderValue> {
+    fn get_header(&self, header: &HeaderName) -> Option<&http::HeaderValue> {
         self.headers().get(header)
     }
 
-    fn set_extension<T: Send + Sync + 'static>(&mut self, ext: T) -> Option<T> {
-        self.extensions_mut().insert(ext)
+    fn get_extensions(&self) -> Self::RequestExtensionsDeref<'_> {
+        self.extensions()
     }
 
-    fn get_extension<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.extensions().get()
-    }
-
-    fn get_extension_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
-        self.extensions_mut().get_mut()
+    fn get_extensions_mut(&mut self) -> Self::RequestExtensionsDerefMut<'_> {
+        self.extensions_mut()
     }
 }
 
@@ -84,12 +100,13 @@ where
     }
 }
 
-impl<S, Handler, Body> Service<Request<Body>> for Authentication<S, Handler>
+impl<S, Handler, Body, AuthFut> Service<Request<Body>> for Authentication<S, Handler>
 where
     S: Service<Request<Body>> + Clone + Send + 'static,
     S::Future: Send,
-    Handler: CompoundAuthenticationHandler,
+    Handler: CompoundAuthenticationHandler<AuthFut = AuthFut>,
     Body: Send + 'static,
+    AuthFut: Future<Output = AuthenticationResult> + Send,
 {
     type Response = S::Response;
 
@@ -175,13 +192,16 @@ where
     }
 }
 
-impl<S, Handler, Requirement, Body> Service<Request<Body>> for Authorize<S, Handler, Requirement>
+impl<S, Handler, Requirement, Body, ChallengeFut, ForbidFut> Service<Request<Body>>
+    for Authorize<S, Handler, Requirement>
 where
     S: Service<Request<Body>> + Clone + Send + 'static,
     S::Future: Send,
-    Handler: CompoundAuthenticationHandler,
+    Handler: CompoundAuthenticationHandler<ChallengeFut = ChallengeFut, ForbidFut = ForbidFut>,
     Requirement: AuthorizationRequirement,
     Body: Send + 'static,
+    ChallengeFut: Future<Output = Option<AuthResponse>> + Send,
+    ForbidFut: Future<Output = Option<AuthResponse>> + Send,
 {
     type Response = Result<S::Response, AuthResponse>;
 

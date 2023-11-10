@@ -1,7 +1,10 @@
-use async_trait::async_trait;
+use std::future::Future;
+
+use futures::future::OptionFuture;
 
 use super::{
-    http::{AuthResponse, Request},
+    futures::{select_seq_ok, select_seq_some, SelectSeqOk, SelectSeqSome},
+    http::{AuthResponse, Request, RequestExtensions},
     principal::AuthenticatedPrincipal,
 };
 
@@ -12,22 +15,32 @@ pub enum AuthenticationError {
 
 pub type AuthenticationResult = Result<AuthenticatedPrincipal, AuthenticationError>;
 
-#[async_trait]
 pub trait AuthenticationHandler: Send + Sync + 'static {
-    async fn authenticate(&self, request: &mut impl Request) -> AuthenticationResult;
+    type AuthFut: Future<Output = AuthenticationResult>;
 
-    async fn challenge(&self) -> AuthResponse;
+    type ChallengeFut: Future<Output = AuthResponse>;
 
-    async fn forbid(&self) -> AuthResponse;
+    type ForbidFut: Future<Output = AuthResponse>;
+
+    fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut;
+
+    fn challenge(&self) -> Self::ChallengeFut;
+
+    fn forbid(&self) -> Self::ForbidFut;
 }
 
-#[async_trait]
 pub trait CompoundAuthenticationHandler: Send + Sync + 'static {
-    async fn authenticate(&self, request: &mut impl Request) -> AuthenticationResult;
+    type AuthFut: Future<Output = AuthenticationResult>;
 
-    async fn challenge(&self, scheme: &str) -> Option<AuthResponse>;
+    type ChallengeFut: Future<Output = Option<AuthResponse>>;
 
-    async fn forbid(&self, scheme: &str) -> Option<AuthResponse>;
+    type ForbidFut: Future<Output = Option<AuthResponse>>;
+
+    fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut;
+
+    fn challenge(&self, scheme: &str) -> Self::ChallengeFut;
+
+    fn forbid(&self, scheme: &str) -> Self::ForbidFut;
 }
 
 pub struct AuthenticationHandlerWithScheme<Handler: AuthenticationHandler> {
@@ -35,63 +48,58 @@ pub struct AuthenticationHandlerWithScheme<Handler: AuthenticationHandler> {
     pub handler: Handler,
 }
 
-#[async_trait]
 impl<H> CompoundAuthenticationHandler for AuthenticationHandlerWithScheme<H>
 where
     H: AuthenticationHandler,
 {
-    async fn authenticate(&self, request: &mut impl Request) -> AuthenticationResult {
-        self.handler.authenticate(request).await
+    type AuthFut = H::AuthFut;
+
+    type ChallengeFut = OptionFuture<H::ChallengeFut>;
+
+    type ForbidFut = OptionFuture<H::ForbidFut>;
+
+    fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut {
+        self.handler.authenticate(request)
     }
 
-    async fn challenge(&self, scheme: &str) -> Option<AuthResponse> {
+    fn challenge(&self, scheme: &str) -> Self::ChallengeFut {
         if scheme == self.scheme {
-            Some(self.handler.challenge().await)
+            Some(self.handler.challenge()).into()
         } else {
-            None
+            OptionFuture::default()
         }
     }
 
-    async fn forbid(&self, scheme: &str) -> Option<AuthResponse> {
+    fn forbid(&self, scheme: &str) -> Self::ForbidFut {
         if scheme == self.scheme {
-            Some(self.handler.forbid().await)
+            Some(self.handler.forbid()).into()
         } else {
-            None
+            OptionFuture::default()
         }
     }
 }
 
-#[async_trait]
 impl<H1, H2> CompoundAuthenticationHandler for (H1, H2)
 where
     H1: CompoundAuthenticationHandler,
     H2: CompoundAuthenticationHandler,
 {
-    async fn authenticate(&self, request: &mut impl Request) -> AuthenticationResult {
-        let result = self.0.authenticate(request).await;
-        if result.is_ok() {
-            result
-        } else {
-            self.1.authenticate(request).await
-        }
+    type AuthFut = SelectSeqOk<H1::AuthFut, H2::AuthFut>;
+
+    type ChallengeFut = SelectSeqSome<H1::ChallengeFut, H2::ChallengeFut>;
+
+    type ForbidFut = SelectSeqSome<H1::ForbidFut, H2::ForbidFut>;
+
+    fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut {
+        select_seq_ok(self.0.authenticate(request), self.1.authenticate(request))
     }
 
-    async fn challenge(&self, scheme: &str) -> Option<AuthResponse> {
-        let response = self.0.challenge(scheme).await;
-        if response.is_some() {
-            response
-        } else {
-            self.1.challenge(scheme).await
-        }
+    fn challenge(&self, scheme: &str) -> Self::ChallengeFut {
+        select_seq_some(self.0.challenge(scheme), self.1.challenge(scheme))
     }
 
-    async fn forbid(&self, scheme: &str) -> Option<AuthResponse> {
-        let response = self.0.forbid(scheme).await;
-        if response.is_some() {
-            response
-        } else {
-            self.1.forbid(scheme).await
-        }
+    fn forbid(&self, scheme: &str) -> Self::ForbidFut {
+        select_seq_some(self.0.forbid(scheme), self.1.forbid(scheme))
     }
 }
 
@@ -111,10 +119,10 @@ where
         let result = self.handler.authenticate(request).await;
         match result {
             Ok(user) => {
-                request.set_extension(user);
+                request.get_extensions_mut().insert(user);
             }
             Err(err) => {
-                request.set_extension(err);
+                request.get_extensions_mut().insert(err);
             }
         };
     }
