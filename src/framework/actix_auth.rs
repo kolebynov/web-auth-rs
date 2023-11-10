@@ -2,6 +2,7 @@ use std::{
     cell::{Ref, RefMut},
     future::{ready, Future, Ready},
     pin::Pin,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -87,7 +88,7 @@ where
 
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(AuthenticationMiddleware {
-            inner: Arc::new(service),
+            inner: Rc::new(service),
             auth_service: self.0.clone(),
         }))
     }
@@ -97,7 +98,7 @@ pub struct AuthenticationMiddleware<S, Handler>
 where
     Handler: CompoundAuthenticationHandler,
 {
-    inner: Arc<S>,
+    inner: Rc<S>,
     auth_service: Arc<AuthenticationService<Handler>>,
 }
 
@@ -155,7 +156,7 @@ where
 
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(AuthorizeMiddleware {
-            inner: Arc::new(service),
+            inner: Rc::new(service),
             policy: self.0.clone(),
         }))
     }
@@ -166,7 +167,7 @@ where
     Handler: CompoundAuthenticationHandler,
     Requirement: AuthorizationRequirement,
 {
-    inner: Arc<S>,
+    inner: Rc<S>,
     policy: AuthorizationPolicy<Handler, Requirement>,
 }
 
