@@ -3,16 +3,19 @@ use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use axum::{response::Html, routing::get, BoxError, Extension, Router};
 use web_auth_rs::{
     core::{
-        authentication::AuthenticationServiceBuilder, authorization::AuthorizationPolicyBuilder,
-        principal::AuthenticatedPrincipal,
+        authentication::{AuthenticationServiceBuilder, SuccessAuthenticationResult},
+        authorization::AuthorizationPolicyBuilder,
     },
     framework::tower_auth::{AuthenticationLayer, AuthorizeLayer},
     jsonwebtoken::{DecodingKey, Validation},
     jwt::JwtBearerHandler,
 };
 
-async fn test_get(Extension(user): Extension<AuthenticatedPrincipal>) -> Html<String> {
-    Html(format!("<pre>hello world:\n{:#?}</pre>", user))
+async fn test_get(Extension(auth_result): Extension<SuccessAuthenticationResult>) -> Html<String> {
+    Html(format!(
+        "<pre>hello world:\n{:#?}</pre>",
+        auth_result.principal
+    ))
 }
 
 #[tokio::main]

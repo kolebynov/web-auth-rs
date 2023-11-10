@@ -3,19 +3,21 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::{
-    authentication::{AuthenticationService, CompoundAuthenticationHandler},
+    authentication::{
+        AuthenticationService, CompoundAuthenticationHandler, SuccessAuthenticationResult,
+    },
     http::{AuthResponse, Request, RequestExtensions},
-    principal::AuthenticatedPrincipal,
+    principal::UserPrincipal,
 };
 
 #[async_trait]
 pub trait AuthorizationRequirement: Clone + Send + Sync + 'static {
-    async fn authorize(&self, principal: &mut AuthenticatedPrincipal) -> bool;
+    async fn authorize(&self, principal: &mut UserPrincipal) -> bool;
 }
 
 #[async_trait]
 impl AuthorizationRequirement for () {
-    async fn authorize(&self, _: &mut AuthenticatedPrincipal) -> bool {
+    async fn authorize(&self, _: &mut UserPrincipal) -> bool {
         true
     }
 }
@@ -26,7 +28,7 @@ where
     R1: AuthorizationRequirement,
     R2: AuthorizationRequirement,
 {
-    async fn authorize(&self, principal: &mut AuthenticatedPrincipal) -> bool {
+    async fn authorize(&self, principal: &mut UserPrincipal) -> bool {
         self.0.authorize(principal).await && self.1.authorize(principal).await
     }
 }
@@ -36,7 +38,7 @@ pub struct IsInRoleRequirement(pub String);
 
 #[async_trait]
 impl AuthorizationRequirement for IsInRoleRequirement {
-    async fn authorize(&self, principal: &mut AuthenticatedPrincipal) -> bool {
+    async fn authorize(&self, principal: &mut UserPrincipal) -> bool {
         principal.is_in_role(&self.0)
     }
 }
@@ -57,11 +59,11 @@ where
 {
     pub async fn authorize(&self, request: &mut impl Request) -> Result<(), AuthResponse> {
         let mut extensions = request.get_extensions_mut();
-        let Some(principal) = extensions.get_mut() else {
+        let Some(auth_result) = extensions.get_mut::<SuccessAuthenticationResult>() else {
             return Err(self.auth_service.challenge(None).await);
         };
 
-        if !self.requirement.authorize(principal).await {
+        if !self.requirement.authorize(&mut auth_result.principal).await {
             return Err(self.auth_service.forbid(None).await);
         }
 

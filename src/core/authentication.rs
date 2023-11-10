@@ -5,7 +5,7 @@ use futures::future::OptionFuture;
 use super::{
     futures::{select_seq_ok, select_seq_some, SelectSeqOk, SelectSeqSome},
     http::{AuthResponse, Request, RequestExtensions},
-    principal::AuthenticatedPrincipal,
+    principal::UserPrincipal,
 };
 
 pub enum AuthenticationError {
@@ -13,7 +13,12 @@ pub enum AuthenticationError {
     Fail(anyhow::Error),
 }
 
-pub type AuthenticationResult = Result<AuthenticatedPrincipal, AuthenticationError>;
+pub type AuthenticationResult = Result<UserPrincipal, AuthenticationError>;
+
+#[derive(Clone)]
+pub struct SuccessAuthenticationResult {
+    pub principal: UserPrincipal,
+}
 
 pub trait AuthenticationHandler: Send + Sync + 'static {
     type AuthFut: Future<Output = AuthenticationResult>;
@@ -117,14 +122,11 @@ where
 {
     pub async fn authenticate(&self, request: &mut impl Request) {
         let result = self.handler.authenticate(request).await;
-        match result {
-            Ok(user) => {
-                request.get_extensions_mut().insert(user);
-            }
-            Err(err) => {
-                request.get_extensions_mut().insert(err);
-            }
-        };
+        if let Ok(principal) = result {
+            request
+                .get_extensions_mut()
+                .insert(SuccessAuthenticationResult { principal });
+        }
     }
 
     pub async fn challenge(&self, scheme: Option<&str>) -> AuthResponse {

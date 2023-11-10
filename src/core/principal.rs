@@ -5,11 +5,11 @@ pub struct Claim {
 }
 
 #[derive(Debug, Clone)]
-pub struct AuthenticatedPrincipal {
+pub struct UserPrincipal {
     pub claims: Vec<Claim>,
 }
 
-impl AuthenticatedPrincipal {
+impl UserPrincipal {
     pub fn is_in_role(&self, role: &str) -> bool {
         self.claims
             .iter()

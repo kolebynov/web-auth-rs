@@ -12,7 +12,7 @@ use jsonwebtoken::{DecodingKey, Validation};
 use crate::core::{
     authentication::{AuthenticationError, AuthenticationHandler, AuthenticationResult},
     http::{AuthResponse, Request},
-    principal::{AuthenticatedPrincipal, Claim},
+    principal::{Claim, UserPrincipal},
 };
 
 pub struct JwtBearerHandler {
@@ -52,7 +52,7 @@ impl AuthenticationHandler for JwtBearerHandler {
             Err(err) => return ready(Err(AuthenticationError::Fail(err.into()))),
         };
 
-        ready(Ok(AuthenticatedPrincipal {
+        ready(Ok(UserPrincipal {
             claims: claims
                 .into_iter()
                 .map(|pair| Claim {

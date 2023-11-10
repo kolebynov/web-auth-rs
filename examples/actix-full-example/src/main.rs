@@ -6,16 +6,16 @@ use actix_web::{
 };
 use web_auth_rs::{
     core::{
-        authentication::AuthenticationServiceBuilder, authorization::AuthorizationPolicyBuilder,
-        principal::AuthenticatedPrincipal,
+        authentication::{AuthenticationServiceBuilder, SuccessAuthenticationResult},
+        authorization::AuthorizationPolicyBuilder,
     },
     framework::actix_auth::{Authentication, Authorize},
     jsonwebtoken::{DecodingKey, Validation},
     jwt::JwtBearerHandler,
 };
 
-async fn test_get(principal: ReqData<AuthenticatedPrincipal>) -> impl Responder {
-    format!("<pre>hello world:\n{:#?}</pre>", principal.into_inner())
+async fn test_get(auth_result: ReqData<SuccessAuthenticationResult>) -> impl Responder {
+    format!("<pre>hello world:\n{:#?}</pre>", auth_result.principal)
 }
 
 #[tokio::main]
