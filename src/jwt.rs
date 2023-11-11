@@ -12,7 +12,7 @@ use jsonwebtoken::{DecodingKey, Validation};
 use crate::core::{
     authentication::{AuthenticationError, AuthenticationHandler, AuthenticationResult},
     http::{AuthResponse, Request},
-    principal::{Claim, UserPrincipal},
+    principal::{ClaimPlainValue, ClaimValue, UserPrincipal},
 };
 
 pub struct JwtBearerHandler {
@@ -55,10 +55,7 @@ impl AuthenticationHandler for JwtBearerHandler {
         ready(Ok(UserPrincipal {
             claims: claims
                 .into_iter()
-                .map(|pair| Claim {
-                    kind: pair.0,
-                    value: json_to_claim_value(pair.1),
-                })
+                .filter_map(|(t, v)| json_to_claim_value(v).map(|c| (t, c)))
                 .collect(),
         }))
     }
@@ -78,9 +75,36 @@ impl AuthenticationHandler for JwtBearerHandler {
     }
 }
 
-fn json_to_claim_value(json_value: serde_json::Value) -> String {
+fn json_to_claim_value(json_value: serde_json::Value) -> Option<ClaimValue> {
     match json_value {
-        serde_json::Value::String(str) => str,
-        _ => json_value.to_string(),
+        serde_json::Value::Array(arr) if !arr.is_empty() => json_arr_to_plain_values(arr).map(ClaimValue::Array),
+        serde_json::Value::Array(_) => None,
+        _ => json_to_plain_value(json_value).map(ClaimValue::PlainValue),
+    }
+}
+
+fn json_arr_to_plain_values(arr: Vec<serde_json::Value>) -> Option<Vec<ClaimPlainValue>> {
+    let result = arr.into_iter().filter_map(json_to_plain_value).collect::<Vec<_>>();
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+fn json_to_plain_value(json_value: serde_json::Value) -> Option<ClaimPlainValue> {
+    match json_value {
+        serde_json::Value::Bool(b) => Some(ClaimPlainValue::Bool(b)),
+        serde_json::Value::Number(num) => {
+            if num.is_f64() {
+                Some(ClaimPlainValue::Float(num.as_f64().unwrap()))
+            } else {
+                num.as_i64().map(ClaimPlainValue::Int)
+            }
+        }
+        serde_json::Value::String(s) => Some(ClaimPlainValue::String(s)),
+        serde_json::Value::Null => None,
+        _ => Some(ClaimPlainValue::String(json_value.to_string())),
     }
 }
