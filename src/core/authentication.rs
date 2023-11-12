@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::future::{ready, Future, Ready};
 
 use futures::future::OptionFuture;
 
@@ -34,6 +34,16 @@ pub trait AuthenticationHandler: Send + Sync + 'static {
     fn forbid(&self) -> Self::ForbidFut;
 }
 
+pub trait SignInOutAuthenticationHandler: AuthenticationHandler {
+    type SignInFut: Future<Output = AuthResponse>;
+
+    type SignOutFut: Future<Output = AuthResponse>;
+
+    fn sign_in(&self, user: &UserPrincipal) -> Self::SignInFut;
+
+    fn sign_out(&self) -> Self::SignOutFut;
+}
+
 pub trait CompoundAuthenticationHandler: Send + Sync + 'static {
     type AuthFut: Future<Output = AuthenticationResult>;
 
@@ -41,11 +51,55 @@ pub trait CompoundAuthenticationHandler: Send + Sync + 'static {
 
     type ForbidFut: Future<Output = Option<AuthResponse>>;
 
+    type SignInFut: Future<Output = Option<AuthResponse>>;
+
+    type SignOutFut: Future<Output = Option<AuthResponse>>;
+
     fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut;
 
     fn challenge(&self, scheme: &str) -> Self::ChallengeFut;
 
     fn forbid(&self, scheme: &str) -> Self::ForbidFut;
+
+    fn sign_in(&self, scheme: &str, user: &UserPrincipal) -> Self::SignInFut;
+
+    fn sign_out(&self, scheme: &str) -> Self::SignOutFut;
+}
+
+impl<H1, H2> CompoundAuthenticationHandler for (H1, H2)
+where
+    H1: CompoundAuthenticationHandler,
+    H2: CompoundAuthenticationHandler,
+{
+    type AuthFut = SelectSeqOk<H1::AuthFut, H2::AuthFut>;
+
+    type ChallengeFut = SelectSeqSome<H1::ChallengeFut, H2::ChallengeFut>;
+
+    type ForbidFut = SelectSeqSome<H1::ForbidFut, H2::ForbidFut>;
+
+    type SignInFut = SelectSeqSome<H1::SignInFut, H2::SignInFut>;
+
+    type SignOutFut = SelectSeqSome<H1::SignOutFut, H2::SignOutFut>;
+
+    fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut {
+        select_seq_ok(self.0.authenticate(request), self.1.authenticate(request))
+    }
+
+    fn challenge(&self, scheme: &str) -> Self::ChallengeFut {
+        select_seq_some(self.0.challenge(scheme), self.1.challenge(scheme))
+    }
+
+    fn forbid(&self, scheme: &str) -> Self::ForbidFut {
+        select_seq_some(self.0.forbid(scheme), self.1.forbid(scheme))
+    }
+
+    fn sign_in(&self, scheme: &str, user: &UserPrincipal) -> Self::SignInFut {
+        select_seq_some(self.0.sign_in(scheme, user), self.1.sign_in(scheme, user))
+    }
+
+    fn sign_out(&self, scheme: &str) -> Self::SignOutFut {
+        select_seq_some(self.0.sign_out(scheme), self.1.sign_out(scheme))
+    }
 }
 
 pub struct AuthenticationHandlerWithScheme<Handler: AuthenticationHandler> {
@@ -63,6 +117,10 @@ where
 
     type ForbidFut = OptionFuture<H::ForbidFut>;
 
+    type SignInFut = Ready<Option<AuthResponse>>;
+
+    type SignOutFut = Ready<Option<AuthResponse>>;
+
     fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut {
         self.handler.authenticate(request)
     }
@@ -71,7 +129,7 @@ where
         if scheme == self.scheme {
             Some(self.handler.challenge()).into()
         } else {
-            OptionFuture::default()
+            None.into()
         }
     }
 
@@ -79,32 +137,72 @@ where
         if scheme == self.scheme {
             Some(self.handler.forbid()).into()
         } else {
-            OptionFuture::default()
+            None.into()
         }
+    }
+
+    fn sign_in(&self, _: &str, _: &UserPrincipal) -> Self::SignInFut {
+        ready(None)
+    }
+
+    fn sign_out(&self, _: &str) -> Self::SignOutFut {
+        ready(None)
     }
 }
 
-impl<H1, H2> CompoundAuthenticationHandler for (H1, H2)
+pub struct SignInOutAuthenticationHandlerWithScheme<Handler: SignInOutAuthenticationHandler> {
+    pub scheme: String,
+    pub handler: Handler,
+}
+
+impl<H> CompoundAuthenticationHandler for SignInOutAuthenticationHandlerWithScheme<H>
 where
-    H1: CompoundAuthenticationHandler,
-    H2: CompoundAuthenticationHandler,
+    H: SignInOutAuthenticationHandler,
 {
-    type AuthFut = SelectSeqOk<H1::AuthFut, H2::AuthFut>;
+    type AuthFut = H::AuthFut;
 
-    type ChallengeFut = SelectSeqSome<H1::ChallengeFut, H2::ChallengeFut>;
+    type ChallengeFut = OptionFuture<H::ChallengeFut>;
 
-    type ForbidFut = SelectSeqSome<H1::ForbidFut, H2::ForbidFut>;
+    type ForbidFut = OptionFuture<H::ForbidFut>;
+
+    type SignInFut = OptionFuture<H::SignInFut>;
+
+    type SignOutFut = OptionFuture<H::SignOutFut>;
 
     fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut {
-        select_seq_ok(self.0.authenticate(request), self.1.authenticate(request))
+        self.handler.authenticate(request)
     }
 
     fn challenge(&self, scheme: &str) -> Self::ChallengeFut {
-        select_seq_some(self.0.challenge(scheme), self.1.challenge(scheme))
+        if scheme == self.scheme {
+            Some(self.handler.challenge()).into()
+        } else {
+            None.into()
+        }
     }
 
     fn forbid(&self, scheme: &str) -> Self::ForbidFut {
-        select_seq_some(self.0.forbid(scheme), self.1.forbid(scheme))
+        if scheme == self.scheme {
+            Some(self.handler.forbid()).into()
+        } else {
+            None.into()
+        }
+    }
+
+    fn sign_in(&self, scheme: &str, user: &UserPrincipal) -> Self::SignInFut {
+        if scheme == self.scheme {
+            Some(self.handler.sign_in(user)).into()
+        } else {
+            None.into()
+        }
+    }
+
+    fn sign_out(&self, scheme: &str) -> Self::SignOutFut {
+        if scheme == self.scheme {
+            Some(self.handler.sign_out()).into()
+        } else {
+            None.into()
+        }
     }
 }
 
@@ -144,6 +242,22 @@ where
             .await
             .unwrap_or_else(|| panic!("Scheme {scheme} is not configured"))
     }
+
+    pub async fn sign_in(&self, scheme: Option<&str>, user: &UserPrincipal) -> AuthResponse {
+        let scheme = scheme.unwrap_or(&self.default_scheme);
+        self.handler
+            .sign_in(scheme, user)
+            .await
+            .unwrap_or_else(|| panic!("Scheme {scheme} is not configured or it doesn't support sign-in/sign-out"))
+    }
+
+    pub async fn sign_out(&self, scheme: Option<&str>) -> AuthResponse {
+        let scheme = scheme.unwrap_or(&self.default_scheme);
+        self.handler
+            .sign_out(scheme)
+            .await
+            .unwrap_or_else(|| panic!("Scheme {scheme} is not configured or it doesn't support sign-in/sign-out"))
+    }
 }
 
 pub struct AuthenticationServiceBuilder<Handler> {
@@ -169,6 +283,17 @@ impl AuthenticationServiceBuilder<()> {
             default_scheme: self.default_scheme,
         }
     }
+
+    pub fn add_sign_in_out_authentication_handler<H: SignInOutAuthenticationHandler>(
+        self,
+        scheme: String,
+        handler: H,
+    ) -> AuthenticationServiceBuilder<SignInOutAuthenticationHandlerWithScheme<H>> {
+        AuthenticationServiceBuilder {
+            handler: SignInOutAuthenticationHandlerWithScheme { scheme, handler },
+            default_scheme: self.default_scheme,
+        }
+    }
 }
 
 impl Default for AuthenticationServiceBuilder<()> {
@@ -188,6 +313,20 @@ where
     ) -> AuthenticationServiceBuilder<(Handler, AuthenticationHandlerWithScheme<H>)> {
         AuthenticationServiceBuilder {
             handler: (self.handler, AuthenticationHandlerWithScheme { scheme, handler }),
+            default_scheme: self.default_scheme,
+        }
+    }
+
+    pub fn add_sign_in_out_authentication_handler<H: SignInOutAuthenticationHandler>(
+        self,
+        scheme: String,
+        handler: H,
+    ) -> AuthenticationServiceBuilder<(Handler, SignInOutAuthenticationHandlerWithScheme<H>)> {
+        AuthenticationServiceBuilder {
+            handler: (
+                self.handler,
+                SignInOutAuthenticationHandlerWithScheme { scheme, handler },
+            ),
             default_scheme: self.default_scheme,
         }
     }
