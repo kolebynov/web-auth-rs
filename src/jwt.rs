@@ -1,11 +1,12 @@
 use std::{
     collections::HashMap,
-    future::{ready, Ready},
+    future::{Ready, ready},
 };
 
+use cookie::Cookie;
 use http::{
-    header::{AUTHORIZATION, WWW_AUTHENTICATE},
     HeaderMap, HeaderValue, StatusCode,
+    header::{AUTHORIZATION, COOKIE, WWW_AUTHENTICATE},
 };
 use jsonwebtoken::{DecodingKey, Validation};
 
@@ -15,9 +16,15 @@ use crate::core::{
     principal::{ClaimPlainValue, ClaimValue, UserPrincipal},
 };
 
+pub enum JwtTokenSource {
+    AuthorizationHeader,
+    Cookie(String),
+}
+
 pub struct JwtBearerHandler {
     pub validation_opt: Validation,
     pub decoding_key: DecodingKey,
+    pub token_sources: Vec<JwtTokenSource>,
 }
 
 impl AuthenticationHandler for JwtBearerHandler {
@@ -28,14 +35,10 @@ impl AuthenticationHandler for JwtBearerHandler {
     type ForbidFut = Ready<AuthResponse>;
 
     fn authenticate(&self, request: &mut impl Request) -> Self::AuthFut {
-        let bearer_token = request.get_header(&AUTHORIZATION).and_then(|h| {
-            let header_str = h.to_str().ok()?;
-            if header_str.starts_with("Bearer ") {
-                header_str.get(7..)
-            } else {
-                None
-            }
-        });
+        let bearer_token = self
+            .token_sources
+            .iter()
+            .find_map(|source| extract_token(request, source));
 
         let Some(bearer_token) = bearer_token else {
             return ready(Err(AuthenticationError::NoResult));
@@ -75,6 +78,27 @@ impl AuthenticationHandler for JwtBearerHandler {
     }
 }
 
+fn extract_token<'a>(request: &'a impl Request, token_source: &JwtTokenSource) -> Option<&'a str> {
+    match token_source {
+        JwtTokenSource::AuthorizationHeader => request.get_header(&AUTHORIZATION).and_then(|h| {
+            let header_str = h.to_str().ok()?;
+            if header_str.starts_with("Bearer ") {
+                header_str.get(7..)
+            } else {
+                None
+            }
+        }),
+        JwtTokenSource::Cookie(cookie_name) => request.get_header(&COOKIE).and_then(|c| {
+            let cookie_str = c.to_str().ok()?;
+            let cookies = Cookie::split_parse(cookie_str);
+            cookies
+                .filter_map(|r| r.ok())
+                .find(|c| c.name() == cookie_name)
+                .and_then(|c| c.value_raw())
+        }),
+    }
+}
+
 fn json_to_claim_value(json_value: serde_json::Value) -> Option<ClaimValue> {
     match json_value {
         serde_json::Value::Array(arr) if !arr.is_empty() => json_arr_to_plain_values(arr).map(ClaimValue::Array),
@@ -86,11 +110,7 @@ fn json_to_claim_value(json_value: serde_json::Value) -> Option<ClaimValue> {
 fn json_arr_to_plain_values(arr: Vec<serde_json::Value>) -> Option<Vec<ClaimPlainValue>> {
     let result = arr.into_iter().filter_map(json_to_plain_value).collect::<Vec<_>>();
 
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
+    if result.is_empty() { None } else { Some(result) }
 }
 
 fn json_to_plain_value(json_value: serde_json::Value) -> Option<ClaimPlainValue> {

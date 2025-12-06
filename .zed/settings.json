@@ -3,10 +3,13 @@
     "rust-analyzer": {
       "initialization_options": {
         "cargo": {
-          "features": ["axum", "jwt"]
+          "features": [
+            "axum",
+            "jwt"
+          ]
         },
         "check": {
-          "features": "tower"
+          "features": []
         }
       }
     }
