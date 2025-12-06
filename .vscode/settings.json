@@ -1,0 +1,10 @@
+{
+    "rust-analyzer.cargo.features": [
+        "axum",
+        "jwt"
+    ],
+    "rust-analyzer.check.features": [
+        "tower"
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": false
+}

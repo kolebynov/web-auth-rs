@@ -1,10 +1,10 @@
 [package]
 name = "axum-full-example"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
-axum = { version = "0.6" }
-tokio = { version = "1.33", features = ["full"] }
+axum = { version = "0.8" }
+tokio = { version = "1.48", features = ["full"] }
 web-auth-rs = { path = "../../", features = ["axum", "jwt"] }

@@ -1,14 +1,14 @@
 use std::{
     cell::{Ref, RefMut},
-    future::{ready, Future, Ready},
+    future::{Future, Ready, ready},
     pin::Pin,
     rc::Rc,
     sync::Arc,
 };
 
 use actix_web::{
-    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage, ResponseError,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
 };
 use http::HeaderName;
 
@@ -57,7 +57,7 @@ impl crate::core::http::Request for ServiceRequest {
 }
 
 impl ResponseError for AuthResponse {
-    fn status_code(&self) -> http::StatusCode {
+    fn status_code(&self) -> actix_web::http::StatusCode {
         self.status_code
     }
 

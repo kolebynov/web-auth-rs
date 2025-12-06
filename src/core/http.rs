@@ -10,7 +10,7 @@ pub trait RequestExtensions {
 
     fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T>;
 
-    fn insert<T: Send + Sync + 'static>(&mut self, ext: T) -> Option<T>;
+    fn insert<T: Clone + Send + Sync + 'static>(&mut self, ext: T) -> Option<T>;
 }
 
 pub trait Request {

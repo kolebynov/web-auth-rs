@@ -1,6 +1,6 @@
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use std::sync::Arc;
 
-use axum::{response::Html, routing::get, BoxError, Extension, Router};
+use axum::{BoxError, Extension, Router, response::Html, routing::get};
 use web_auth_rs::{
     core::{
         authentication::{AuthenticationServiceBuilder, SuccessAuthenticationResult},
@@ -42,12 +42,11 @@ async fn main() -> Result<(), BoxError> {
     );
 
     let router = Router::new()
-        .route("/*rest", get(test_get).layer(authorize_layer))
+        .fallback(get(test_get).layer(authorize_layer))
         .layer(AuthenticationLayer { service: auth_service });
 
-    axum::Server::try_bind(&SocketAddr::from_str("0.0.0.0:8000")?)?
-        .serve(router.into_make_service_with_connect_info::<SocketAddr>())
-        .await?;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await?;
+    axum::serve(listener, router).await?;
 
     Ok(())
 }

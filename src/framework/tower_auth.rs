@@ -18,7 +18,7 @@ impl RequestExtensions for http::Extensions {
         self.get_mut()
     }
 
-    fn insert<T: Send + Sync + 'static>(&mut self, ext: T) -> Option<T> {
+    fn insert<T: Clone + Send + Sync + 'static>(&mut self, ext: T) -> Option<T> {
         self.insert(ext)
     }
 }

@@ -339,9 +339,7 @@ where
     }
 
     pub fn build(self) -> Option<AuthenticationService<Handler>> {
-        let Some(default_scheme) = self.default_scheme else {
-            return None;
-        };
+        let default_scheme = self.default_scheme?;
 
         Some(AuthenticationService {
             default_scheme,
